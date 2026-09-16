@@ -28,6 +28,29 @@ real watch page by JavaScript.
 - The existing PHP tool `spikehidden/TubeFix` emits an **empty** `og:video` on
   HLS-only instances — it only reads `.files` and doesn't fall back to
   `.streamingPlaylists[0].files`. Worth a bug report upstream.
+- `thumbnails[]` entries carry an **absolute `fileUrl`**, not a relative
+  `.path`. The original assumption below (Thumbnail section) was wrong and
+  produced an empty `og:image` until caught against a real API response.
+  Entries can also include non-16:9 crops (e.g. a 1:1 square) that are wider
+  than the 16:9 one and would win a naive "widest wins" sort — filter for
+  `aspectRatio === '16:9'` first.
+- A PeerTube instance can emit **multiple files at the same `resolution.id`**
+  with very different bitrates — e.g. a live-transcoded 2Mbps 720p rendition
+  alongside an up-to-8Mbps source-quality 720p/1080p one kept from an edited
+  livestream clip. `resolution.id` alone can't tell them apart. File
+  selection must break ties by size (prefer the smaller rendition within a
+  tier), or the byte-budget picker can silently prefer the expensive
+  variant depending on array order returned by the API.
+- Discord's per-URL embed cache is **global**, not per-channel/per-server —
+  reposting the identical URL in an unrelated chat still doesn't hit the
+  origin again. Confirmed by seeing zero new proxy log lines across reposts
+  in different Discord servers.
+- After the first viewer loads a video, subsequent viewers (including in
+  different chats) see playback start in ~1-2s regardless of the original
+  file size — strong circumstantial evidence Discord caches the media file
+  on their CDN after the first fetch, not just the OG metadata. Not
+  confirmed from origin (Backblaze B2) access logs — didn't seem worth
+  chasing further once the proxy-side behavior was clear.
 
 ## Architecture
 
@@ -82,10 +105,16 @@ Rules:
 - Select by **byte budget**, not resolution: each file object has `size`, so
   pick the highest resolution that fits the budget. A 30s 1080p clip is smaller
   than a 20min 480p one.
+- Within a resolution tier, **prefer the smallest file**, not just "first that
+  fits". Multiple bitrates can share the same `resolution.id` (see Verified
+  facts) — sort by `resolution.id` desc, then `size` asc, so the cheap
+  rendition wins whenever it's available.
 - If nothing fits the budget, **omit the video tags entirely** and serve an
   image-only card (title + description + `og:image`). A clean thumbnail beats a
   player that times out.
-- Support `?q=720` to override the budget for specific links.
+- Support `?q=720` to override the budget for specific links (bypasses the
+  budget entirely for that resolution; also picks the smallest file at that
+  resolution if more than one bitrate exists).
 
 ## Thumbnail
 
@@ -93,6 +122,13 @@ Rules:
 image and looks soft when scaled. Both are relative — prefix the instance URL.
 Both are deprecated as of PeerTube 8.1 in favour of a `thumbnails` array;
 prefer the array when present, fall back to the flat fields.
+
+**Correction (tested against a real response):** `thumbnails[]` entries use
+an already-**absolute** `fileUrl` field, not a relative `.path` — reading
+`.path` silently produced an empty `og:image`. Entries can also include a
+non-16:9 crop (a 1:1 square was seen alongside the 16:9 one); filter for
+`aspectRatio === '16:9'` before picking the widest, or the square crop can
+win by width and get served as `og:image` with wrong proportions.
 
 ## Output HTML
 
@@ -139,6 +175,25 @@ Notes:
 - Own Caddy site block for `embed.video.nyc`, own log file, JSON format.
 - Rate limit — every hit triggers an outbound request.
 - Caddy's `rate_limit` needs a plugin; an in-process limiter is fine instead.
+- `LOG_LEVEL` (silent/error/info/debug, default `info`) gates a JSON line per
+  request — cache hit/miss, chosen resolution+size, handling time. Only
+  covers the proxy's own work (metadata fetch + render); the actual video
+  fetch happens client→origin directly and never touches this server, so it
+  can't explain Discord-side playback latency.
+- **`127.0.0.1` inside a container is the container itself**, not the host or
+  a sibling container. `LOCAL_API_BASE=http://127.0.0.1:9000` only works for
+  a bare `node` process on the same host as PeerTube. Under Docker, either
+  join PeerTube's compose network and use its service name
+  (`http://peertube:9000`), or run outside Docker entirely.
+- `docker-compose.yml` here hardcodes its env vars under `environment:` — it
+  does **not** read the project's `.env` file (that's only loaded by
+  `dotenv` for a bare `node` run, and isn't copied into the image). Add
+  `env_file: .env` to the service if you want the container to pick up
+  `.env` values.
+- A `git pull` on the server does **not** update a running container — if
+  `docker-compose.yml` builds an image (`build: .`), the image is a frozen
+  snapshot from the last build. Needs `docker compose up -d --build` after
+  pulling, not just `restart`.
 
 ## Testing
 
@@ -161,14 +216,35 @@ fresh URL (`?v=2`, `?v=3`) or you'll be looking at a stale result.
 
 ## Open questions
 
-- Does Discord range-read or pull whole files? Check the Caddy log: `206` with
-  a `Range` header and small sizes means partial; a single `200` with full
-  `Content-Length` means whole-file. Determines whether the byte budget should
-  be generous or tight, and whether bandwidth cost is per-video or per-viewer.
-- Does Discord cache the file on their CDN? One fetch total across many viewers
-  means cached; one per viewer means proxied only.
-- Practical size ceiling for long videos. May need a generated 30s preview clip
-  (ffmpeg, cached on disk) for multi-hour content.
+- **Does Discord range-read or pull whole files? Partially answered.**
+  Seeking works (confirmed earlier) and, at ~332MB, playback would only
+  start after a manual seek — suggesting range-reads are real but whatever
+  triggers *automatic* buffering/autoplay is a separate, more fragile path
+  that stalls on larger files. Not confirmed from origin logs (the file URL
+  is served directly from Backblaze B2, bypassing Caddy entirely, so there's
+  no request log on our side to inspect — would need B2's own access logs).
+- **Does Discord cache the file on their CDN? Probably yes, circumstantially.**
+  First playback of a given file took 5s-30s+ depending on size; every
+  subsequent viewer (including in unrelated Discord servers) saw ~1-2s
+  starts regardless of original size. Not verified via B2 access logs.
+- **Practical size ceiling for long videos — rough data, needs
+  reverification.** Single test session, same video re-encoded/trimmed to
+  different sizes, `?q=1080` used to force resolution past the budget:
+
+  | Size | Card renders | Playback |
+  |---|---|---|
+  | 62MB (720p, ~2.7Mbps) | fast | starts quickly |
+  | 118MB (1080p, ~5.5Mbps) | fast | ~5s |
+  | 332MB | ~10s | 30s+ wait, or only after a manual seek |
+  | 434MB | — | doesn't load |
+  | 960MB | never rendered in 3+ min | — |
+
+  **Caveat: this whole session was run tethered to phone data**, which could
+  explain some of the degradation independent of Discord/file size — needs
+  rerunning on a stable connection before treating the 332-434MB boundary as
+  real. Until reverified, keep `DEFAULT_BUDGET_BYTES` comfortably under
+  ~150-200MB for the "fast and reliable" zone rather than pushing toward the
+  observed failure point.
 - `.m3u8` in `og:video` almost certainly doesn't work (Chromium has no native
   HLS; the proxy fetches single files, not manifests) — untested.
 
