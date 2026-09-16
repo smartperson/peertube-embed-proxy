@@ -1,0 +1,19 @@
+{
+  "name": "peertube-embed-proxy",
+  "version": "0.1.0",
+  "description": "Serves alternate OG metadata for PeerTube watch pages, pointing og:video at a direct media file so Discord (and similar) render an inline player instead of a dead iframe card.",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

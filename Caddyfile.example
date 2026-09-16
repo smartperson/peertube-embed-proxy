@@ -1,0 +1,8 @@
+embed.video.nyc {
+	reverse_proxy 127.0.0.1:3000
+
+	log {
+		output file /var/log/caddy/embed.video.nyc.json
+		format json
+	}
+}

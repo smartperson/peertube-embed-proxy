@@ -1,0 +1,25 @@
+services:
+  embed-proxy:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DEFAULT_HOST: video.nyc
+      # Point at your PeerTube service name/address if this compose file
+      # joins the same network as PeerTube; otherwise leave the loopback
+      # default from .env.example for a same-box, non-compose PeerTube.
+      LOCAL_API_BASE: http://peertube:9000
+      MULTI_INSTANCE_ENABLED: "false"
+      CACHE_TTL_MS: 3600000
+      DEFAULT_BUDGET_BYTES: 26214400
+      TRUST_PROXY: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    # Uncomment and point at your PeerTube stack's network so
+    # LOCAL_API_BASE's hostname resolves:
+    # networks:
+    #   - peertube_default
+
+# networks:
+#   peertube_default:
+#     external: true
