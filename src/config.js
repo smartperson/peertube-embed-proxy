@@ -32,4 +32,9 @@ module.exports = {
   // Set to a number (proxy hop count) or true when behind Caddy/a load balancer,
   // so req.ip reflects the real client for rate limiting.
   trustProxy: process.env.TRUST_PROXY === 'true' ? true : (Number(process.env.TRUST_PROXY) || false),
+
+  // silent | error | info | debug. info logs one JSON line per request
+  // (chosen resolution/size, cache hit, status, timing) -- useful for
+  // diagnosing slow embeds. debug adds the full picked file object.
+  logLevel: process.env.LOG_LEVEL || 'info',
 };

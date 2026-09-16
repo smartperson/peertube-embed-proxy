@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 // Simple fixed-window per-IP limiter. Every hit here triggers an outbound
 // request to a PeerTube API, so this exists to keep abuse cheap rather than
 // to be precise. Caddy's rate_limit needs a plugin, so this runs in-process.
@@ -21,6 +23,7 @@ function createRateLimiter({ windowMs, max }) {
     }
     entry.count += 1;
     if (entry.count > max) {
+      logger.info('rate_limited', { ip, count: entry.count, max });
       res.status(429).type('text/plain').send('Too Many Requests');
       return;
     }
