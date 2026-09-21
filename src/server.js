@@ -8,7 +8,7 @@ const { pickFile } = require('./pickFile');
 const { resolveThumbnail } = require('./thumbnail');
 const { renderPage } = require('./render');
 
-const videoCache = new TtlCache(config.cacheTtlMs);
+const videoCache = new TtlCache(config.cacheTtlMs, config.cacheMaxEntries);
 
 function buildRealUrl(host, rawId) {
   return `https://${host}/w/${encodeURIComponent(rawId)}`;

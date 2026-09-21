@@ -85,6 +85,14 @@ redirect to the real page. Never 500.
 
 Cache responses in memory keyed on `host:id`, short TTL (~1h).
 
+`:id` is attacker-controlled and failed lookups get cached too (short TTL,
+so a private/missing video doesn't hammer the API on every hit) — without a
+hard size cap, a flood of unique junk ids grows the cache without bound
+regardless of what the rate limiter allows per IP. The cache enforces a
+`CACHE_MAX_ENTRIES` ceiling (FIFO eviction) for exactly this reason, plus a
+periodic sweep to reclaim expired entries proactively rather than only on
+next access to that exact key.
+
 ## Picking the file
 
 ```js

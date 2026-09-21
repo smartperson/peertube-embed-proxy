@@ -23,6 +23,12 @@ module.exports = {
   cacheTtlMs: Number(process.env.CACHE_TTL_MS) || 60 * 60 * 1000, // 1h
   negativeCacheTtlMs: Number(process.env.NEGATIVE_CACHE_TTL_MS) || 5 * 60 * 1000, // 5m
 
+  // Hard cap on the video-metadata cache's size (oldest entry evicted once
+  // full). :id is attacker-controlled and negative lookups get cached too,
+  // so this bounds memory against a flood of junk ids regardless of the
+  // rate limiter.
+  cacheMaxEntries: Number(process.env.CACHE_MAX_ENTRIES) || 5000,
+
   // Byte budget for picking a file to embed. Highest resolution that fits wins.
   defaultBudgetBytes: Number(process.env.DEFAULT_BUDGET_BYTES) || 25 * 1024 * 1024, // 25MB
 
